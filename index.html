@@ -3,82 +3,717 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bos Anime Player</title>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <title>CinePlay Anime - Live AniList Engine</title>
+    <!-- Plyr CSS & Google Fonts -->
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
     <style>
-        body { font-family: system-ui, sans-serif; background: #0f172a; color: #fff; margin: 0; padding: 20px; text-align: center; }
-        .container { max-width: 800px; margin: 0 auto; }
-        .controls { margin-bottom: 15px; display: flex; justify-content: center; gap: 10px; align-items: center; flex-wrap: wrap; }
-        input, button { padding: 10px; border-radius: 6px; border: none; font-size: 14px; }
-        input { width: 120px; background: #1e293b; color: #fff; border: 1px solid #334155; text-align: center; }
-        button { background: #2563eb; color: white; cursor: pointer; font-weight: bold; }
-        button:hover { background: #1d4ed8; }
-        video { width: 100%; max-height: 480px; background: #000; border-radius: 10px; margin-top: 10px; }
-        #status { margin-top: 10px; font-size: 14px; color: #94a3b8; word-break: break-all; }
+        :root {
+            --bg-body: #090a0f;
+            --bg-card: #12141d;
+            --bg-accent: #1e2230;
+            --primary: #e50914;
+            --primary-hover: #ff1e27;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --border-color: #272c3d;
+            --radius: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(9, 10, 15, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 800;
+            color: var(--primary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logo span { color: #fff; }
+
+        .search-box {
+            position: relative;
+            width: 100%;
+            max-width: 320px;
+        }
+
+        .search-box input {
+            width: 100%;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            padding: 8px 16px 8px 36px;
+            border-radius: 20px;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .search-box input:focus {
+            border-color: var(--primary);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        main {
+            flex: 1;
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .page-view {
+            display: none;
+        }
+
+        .page-view.active {
+            display: block;
+        }
+
+        /* 1. HOME PAGE STYLES */
+        .hero-banner {
+            width: 100%;
+            height: 260px;
+            border-radius: var(--radius);
+            background: linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(9,10,15,0.95) 100%), 
+                        url('https://images.unsplash.com/photo-1578632767115-351597cf2477?q=80&w=1200') center/cover;
+            display: flex;
+            align-items: flex-end;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .hero-title {
+            font-size: 24px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+
+        .section-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .anime-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 16px;
+        }
+
+        @media (min-width: 768px) {
+            .anime-grid {
+                grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+                gap: 20px;
+            }
+        }
+
+        .anime-card {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: transform 0.2s, border-color 0.2s;
+            position: relative;
+        }
+
+        .anime-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--primary);
+        }
+
+        .card-img-wrapper {
+            position: relative;
+            width: 100%;
+            padding-top: 140%;
+        }
+
+        .card-img-wrapper img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .badge-sub {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            background: var(--primary);
+            color: #fff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 6px;
+            border-radius: 4px;
+        }
+
+        .card-info {
+            padding: 10px;
+        }
+
+        .card-title {
+            font-size: 13px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* 2. DETAIL PAGE STYLES */
+        .detail-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        @media (min-width: 768px) {
+            .detail-wrapper {
+                flex-direction: row;
+            }
+        }
+
+        .detail-poster {
+            width: 220px;
+            border-radius: var(--radius);
+            overflow: hidden;
+            margin: 0 auto;
+        }
+
+        .detail-poster img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .detail-content {
+            flex: 1;
+        }
+
+        .episode-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(65px, 1fr));
+            gap: 8px;
+            margin-top: 16px;
+            max-height: 350px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        .ep-btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: #fff;
+            padding: 10px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        .ep-btn:hover {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+
+        /* 3. PLAYER PAGE STYLES */
+        .player-container {
+            width: 100%;
+            background: #000;
+            border-radius: var(--radius);
+            overflow: hidden;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.8);
+        }
+
+        .player-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 16px;
+            background: var(--bg-card);
+            padding: 12px 16px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border-color);
+        }
+
+        .server-section {
+            margin-top: 16px;
+            background: var(--bg-card);
+            padding: 16px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border-color);
+        }
+
+        .server-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .server-group:last-child { margin-bottom: 0; }
+
+        .server-label {
+            font-size: 12px;
+            font-weight: 800;
+            color: var(--text-muted);
+            width: 50px;
+        }
+
+        .server-btn {
+            background: var(--bg-accent);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .server-btn.active {
+            background: #fff;
+            color: #000;
+            border-color: #fff;
+            font-weight: 800;
+        }
+
+        .nav-btn {
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .plyr__captions {
+            font-size: 18px !important;
+            bottom: 25px !important;
+        }
+        .plyr__caption {
+            background: rgba(0,0,0,0.8) !important;
+            padding: 4px 10px !important;
+            border-radius: 4px !important;
+        }
+
+        .loading-text {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 40px;
+            grid-column: 1 / -1;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h2>🎬 Bos Anime Stream Player</h2>
-        <div class="controls">
-            <div>
-                <label>AniList ID:</label>
-                <input type="text" id="animeId" value="150672">
-            </div>
-            <div>
-                <label>Episode:</label>
-                <input type="number" id="epNum" value="1" min="1">
-            </div>
-            <button onclick="loadStream()">Putar Video</button>
+
+    <!-- Header Navigation -->
+    <header>
+        <div class="logo" onclick="switchPage('homePage')">
+            🎬 <span>CinePlay</span>
         </div>
-        <p id="status">Masukkan AniList ID lalu klik "Putar Video"...</p>
-        <video id="video" controls></video>
-    </div>
+        <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="searchInput" placeholder="Cari anime live AniList..." onkeyup="debounceSearch()">
+        </div>
+    </header>
+
+    <main>
+        <!-- 1. HOME PAGE -->
+        <div id="homePage" class="page-view active">
+            <div class="hero-banner">
+                <div>
+                    <div class="badge-sub" style="position:relative; top:0; left:0; display:inline-block; margin-bottom:8px;">TRENDING NOW</div>
+                    <div class="hero-title" id="heroTitle">Memuat Anime...</div>
+                    <p style="font-size: 13px; color: var(--text-muted);">Integrasi AniList API Resmi & Stream Engine Proxy.</p>
+                </div>
+            </div>
+
+            <div class="section-title">
+                <span id="gridSectionTitle">🔥 Trending Anime (AniList)</span>
+            </div>
+            <div id="animeGrid" class="anime-grid">
+                <div class="loading-text">Sedang mengambil data anime dari AniList...</div>
+            </div>
+        </div>
+
+        <!-- 2. DETAIL PAGE -->
+        <div id="detailPage" class="page-view">
+            <button onclick="switchPage('homePage')" class="nav-btn" style="margin-bottom: 16px;">⬅ Kembali</button>
+            <div class="detail-wrapper">
+                <div class="detail-poster">
+                    <img id="detailImg" src="" alt="Poster">
+                </div>
+                <div class="detail-content">
+                    <h2 id="detailTitle" style="font-size: 24px; font-weight: 800;">-</h2>
+                    <p id="detailDesc" style="color: var(--text-muted); margin: 12px 0; font-size: 14px; line-height: 1.6;">-</p>
+                    
+                    <h3 style="font-size: 16px; font-weight: 700; margin-top: 20px;">Daftar Episode</h3>
+                    <div id="episodeGrid" class="episode-grid"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. PLAYER PAGE -->
+        <div id="playerPage" class="page-view">
+            <button onclick="switchPage('detailPage')" class="nav-btn" style="margin-bottom: 16px;">⬅ Detail Anime</button>
+            
+            <div class="player-container">
+                <video id="player" controls crossorigin playsinline></video>
+            </div>
+
+            <div class="player-nav">
+                <button id="prevEpBtn" class="nav-btn" onclick="changeEpisode(-1)">⏮ EP Sebelumnya</button>
+                <span id="epIndicator" style="font-weight: 700; font-size: 14px;">EP 1</span>
+                <button id="nextEpBtn" class="nav-btn" onclick="changeEpisode(1)">EP Selanjutnya ⏭</button>
+            </div>
+
+            <div class="server-section">
+                <div class="server-group" id="subServerGroup">
+                    <span class="server-label">SUB:</span>
+                </div>
+                <div class="server-group" id="dubServerGroup">
+                    <span class="server-label">DUB:</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
 
     <script>
-        let hls;
+        const ANILIST_GRAPHQL_URL = 'https://graphql.anilist.co';
 
-        async function loadStream() {
-            const id = document.getElementById('animeId').value;
-            const ep = document.getElementById('epNum').value;
-            const status = document.getElementById('status');
-            const video = document.getElementById('video');
+        let currentAnime = null;
+        let currentEp = 1;
+        let currentMode = 'sub';
+        let currentServer = 'momo';
+        let searchTimeout = null;
 
-            status.innerText = `⏳ Loading stream ID ${id} Ep ${ep}...`;
+        let plyrInstance = null;
+        let hlsInstance = null;
 
+        // Fetcher GraphQL AniList
+        async function fetchAniList(query, variables = {}) {
             try {
-                const res = await fetch(`/api/stream/${id}/${ep}`);
-                const data = await res.json();
-
-                if (!data.success) {
-                    status.innerText = `❌ Error: ${data.message}`;
-                    return;
-                }
-
-                status.innerText = `▶️ Server: ${data.serverUsed.toUpperCase()} | Subtitles: ${data.subtitles.length} tracks`;
-
-                const streamUrl = data.stream.m3u8;
-
-                if (Hls.isSupported()) {
-                    if (hls) hls.destroy();
-                    hls = new Hls();
-                    hls.loadSource(streamUrl);
-                    hls.attachMedia(video);
-                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                        video.play();
-                    });
-                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                    video.src = streamUrl;
-                    video.addEventListener('loadedmetadata', function() {
-                        video.play();
-                    });
-                } else {
-                    status.innerText = '❌ Browser tidak mendukung playback HLS M3U8.';
-                }
+                const response = await fetch(ANILIST_GRAPHQL_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify({ query, variables })
+                });
+                const result = await response.json();
+                return result.data;
             } catch (err) {
-                status.innerText = `❌ Error koneksi API: ${err.message}`;
+                console.error('AniList API Error:', err);
+                return null;
             }
         }
+
+        // SPA Page Switcher
+        function switchPage(pageId) {
+            document.querySelectorAll('.page-view').forEach(el => el.classList.remove('active'));
+            document.getElementById(pageId).classList.add('active');
+
+            if (pageId !== 'playerPage') {
+                killPlayer();
+            }
+        }
+
+        // Load Trending Anime (Home)
+        async function loadTrendingAnime() {
+            const query = `
+                query {
+                    Page(page: 1, perPage: 24) {
+                        media(sort: TRENDING_DESC, type: ANIME, isAdult: false) {
+                            id
+                            title {
+                                english
+                                romaji
+                            }
+                            coverImage {
+                                extraLarge
+                            }
+                            description
+                            episodes
+                        }
+                    }
+                }
+            `;
+            const data = await fetchAniList(query);
+            if (data && data.Page && data.Page.media) {
+                const list = data.Page.media;
+                if (list.length > 0) {
+                    document.getElementById('heroTitle').innerText = list[0].title.english || list[0].title.romaji;
+                }
+                renderHomeGrid(list);
+            } else {
+                document.getElementById('animeGrid').innerHTML = '<div class="loading-text">Gagal memuat data dari AniList.</div>';
+            }
+        }
+
+        // Search Anime via AniList GraphQL
+        function debounceSearch() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(searchAnime, 500);
+        }
+
+        async function searchAnime() {
+            const keyword = document.getElementById('searchInput').value.trim();
+            if (!keyword) {
+                document.getElementById('gridSectionTitle').innerText = '🔥 Trending Anime (AniList)';
+                return loadTrendingAnime();
+            }
+
+            document.getElementById('gridSectionTitle').innerText = `🔍 Hasil Pencarian: "${keyword}"`;
+            document.getElementById('animeGrid').innerHTML = '<div class="loading-text">Mencari di AniList...</div>';
+
+            const query = `
+                query ($search: String) {
+                    Page(page: 1, perPage: 24) {
+                        media(search: $search, type: ANIME, isAdult: false) {
+                            id
+                            title {
+                                english
+                                romaji
+                            }
+                            coverImage {
+                                extraLarge
+                            }
+                            description
+                            episodes
+                        }
+                    }
+                }
+            `;
+
+            const data = await fetchAniList(query, { search: keyword });
+            if (data && data.Page && data.Page.media) {
+                renderHomeGrid(data.Page.media);
+            } else {
+                document.getElementById('animeGrid').innerHTML = '<div class="loading-text">Anime tidak ditemukan.</div>';
+            }
+        }
+
+        // Render Home Grid Cards
+        function renderHomeGrid(items) {
+            const grid = document.getElementById('animeGrid');
+            grid.innerHTML = '';
+            
+            if (items.length === 0) {
+                grid.innerHTML = '<div class="loading-text">Tidak ada anime ditemukan.</div>';
+                return;
+            }
+
+            items.forEach(anime => {
+                const titleText = anime.title.english || anime.title.romaji || 'Untitled';
+                const card = document.createElement('div');
+                card.className = 'anime-card';
+                card.onclick = () => openDetail(anime);
+                card.innerHTML = `
+                    <div class="card-img-wrapper">
+                        <img src="${anime.coverImage.extraLarge}" alt="${titleText}" loading="lazy">
+                        <div class="badge-sub">SUB / DUB</div>
+                    </div>
+                    <div class="card-info">
+                        <div class="card-title">${titleText}</div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        // Open Detail Page
+        function openDetail(anime) {
+            currentAnime = anime;
+            const titleText = anime.title.english || anime.title.romaji;
+            
+            document.getElementById('detailTitle').innerText = titleText;
+            document.getElementById('detailDesc').innerHTML = (anime.description || 'Tidak ada deskripsi.').replace(/<br\s*[\/]?>/gi, ' ');
+            document.getElementById('detailImg').src = anime.coverImage.extraLarge;
+
+            const totalEp = anime.episodes || 12; // Fallback 12 ep jika episode bernilai null
+            const epGrid = document.getElementById('episodeGrid');
+            epGrid.innerHTML = '';
+
+            for (let i = 1; i <= Math.min(totalEp, 100); i++) {
+                const btn = document.createElement('div');
+                btn.className = 'ep-btn';
+                btn.innerText = `EP ${i}`;
+                btn.onclick = () => loadVideo(i);
+                epGrid.appendChild(btn);
+            }
+
+            switchPage('detailPage');
+        }
+
+        // Stop Player
+        function killPlayer() {
+            const video = document.getElementById('player');
+            if (video) {
+                video.pause();
+                video.removeAttribute('src');
+                video.load();
+                video.querySelectorAll('track').forEach(t => t.remove());
+            }
+            if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+            if (plyrInstance) { plyrInstance.destroy(); plyrInstance = null; }
+        }
+
+        // Load Stream Video dari Node.js Proxy
+        async function loadVideo(epNumber, mode = 'sub', serverName = '') {
+            currentEp = epNumber;
+            currentMode = mode;
+            switchPage('playerPage');
+            killPlayer();
+
+            document.getElementById('epIndicator').innerText = `EP ${currentEp}`;
+            const video = document.getElementById('player');
+
+            try {
+                let query = `?mode=${mode}`;
+                if (serverName) query += `&server=${encodeURIComponent(serverName)}`;
+
+                const response = await fetch(`/api/stream/${currentAnime.id}/${currentEp}${query}`);
+                const data = await response.json();
+
+                if (!data || !data.success) {
+                    return alert('Gagal memuat video: ' + (data ? data.message : 'Koneksi error'));
+                }
+
+                currentServer = data.serverUsed;
+                renderServerControls(data.subServers || [], data.dubServers || [], currentMode, currentServer);
+
+                // Inject Subtitles VTT
+                if (Array.isArray(data.subtitles) && data.subtitles.length > 0) {
+                    data.subtitles.forEach((sub, idx) => {
+                        if (!sub || !sub.file) return;
+                        const track = document.createElement('track');
+                        track.kind = 'captions';
+                        track.label = sub.label || 'Subtitle';
+                        track.srclang = (sub.label || 'en').substring(0, 2).toLowerCase();
+                        track.src = sub.file;
+                        if (idx === 0 || sub.label.toLowerCase().includes('english')) track.default = true;
+                        video.appendChild(track);
+                    });
+                }
+
+                // Play Stream (HLS vs Direct MP4)
+                if (data.stream.isM3u8) {
+                    if (Hls.isSupported()) {
+                        hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true, maxBufferLength: 6 });
+                        hlsInstance.loadSource(data.stream.url);
+                        hlsInstance.attachMedia(video);
+                    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                        video.src = data.stream.url;
+                    }
+                } else {
+                    video.src = data.stream.url;
+                }
+
+                plyrInstance = new Plyr(video, { captions: { active: true, update: true, language: 'auto' } });
+                plyrInstance.on('ready', () => plyrInstance.captions.active = true);
+                video.play().catch(() => {});
+
+            } catch (err) {
+                alert('Gagal terkoneksi ke backend proxy server.');
+            }
+        }
+
+        // Render Server UI
+        function renderServerControls(subServers, dubServers, activeMode, activeServer) {
+            const subBox = document.getElementById('subServerGroup');
+            const dubBox = document.getElementById('dubServerGroup');
+
+            subBox.innerHTML = '<span class="server-label">SUB:</span>';
+            dubBox.innerHTML = '<span class="server-label">DUB:</span>';
+
+            subServers.forEach(srv => {
+                const btn = document.createElement('button');
+                btn.className = `server-btn ${activeMode === 'sub' && srv === activeServer ? 'active' : ''}`;
+                btn.innerText = srv.toUpperCase();
+                btn.onclick = () => loadVideo(currentEp, 'sub', srv);
+                subBox.appendChild(btn);
+            });
+
+            if (dubServers.length === 0) {
+                dubBox.innerHTML += '<span style="font-size:12px; color:var(--text-muted);">(Tidak tersedia)</span>';
+            } else {
+                dubServers.forEach(srv => {
+                    const btn = document.createElement('button');
+                    btn.className = `server-btn ${activeMode === 'dub' && srv === activeServer ? 'active' : ''}`;
+                    btn.innerText = srv.toUpperCase();
+                    btn.onclick = () => loadVideo(currentEp, 'dub', srv);
+                    dubBox.appendChild(btn);
+                });
+            }
+        }
+
+        // Change Episode Next/Prev
+        function changeEpisode(offset) {
+            const totalEp = currentAnime.episodes || 100;
+            const nextEp = currentEp + offset;
+            if (nextEp >= 1 && nextEp <= totalEp) {
+                loadVideo(nextEp, currentMode, currentServer);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadTrendingAnime();
+        });
     </script>
 </body>
 </html>
