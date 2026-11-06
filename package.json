@@ -1,0 +1,12 @@
+{
+  "name": "bos-anime-api",
+  "version": "1.0.0",
+  "description": "Anime Streaming API & Proxy",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bos Anime Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #0f172a; color: #fff; margin: 0; padding: 20px; text-align: center; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .controls { margin-bottom: 15px; display: flex; justify-content: center; gap: 10px; align-items: center; flex-wrap: wrap; }
+        input, button { padding: 10px; border-radius: 6px; border: none; font-size: 14px; }
+        input { width: 120px; background: #1e293b; color: #fff; border: 1px solid #334155; text-align: center; }
+        button { background: #2563eb; color: white; cursor: pointer; font-weight: bold; }
+        button:hover { background: #1d4ed8; }
+        video { width: 100%; max-height: 480px; background: #000; border-radius: 10px; margin-top: 10px; }
+        #status { margin-top: 10px; font-size: 14px; color: #94a3b8; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🎬 Bos Anime Stream Player</h2>
+        <div class="controls">
+            <div>
+                <label>AniList ID:</label>
+                <input type="text" id="animeId" value="150672">
+            </div>
+            <div>
+                <label>Episode:</label>
+                <input type="number" id="epNum" value="1" min="1">
+            </div>
+            <button onclick="loadStream()">Putar Video</button>
+        </div>
+        <p id="status">Masukkan AniList ID lalu klik "Putar Video"...</p>
+        <video id="video" controls></video>
+    </div>
+
+    <script>
+        let hls;
+
+        async function loadStream() {
+            const id = document.getElementById('animeId').value;
+            const ep = document.getElementById('epNum').value;
+            const status = document.getElementById('status');
+            const video = document.getElementById('video');
+
+            status.innerText = `⏳ Loading stream ID ${id} Ep ${ep}...`;
+
+            try {
+                const res = await fetch(`/api/stream/${id}/${ep}`);
+                const data = await res.json();
+
+                if (!data.success) {
+                    status.innerText = `❌ Error: ${data.message}`;
+                    return;
+                }
+
+                status.innerText = `▶️ Server: ${data.serverUsed.toUpperCase()} | Subtitles: ${data.subtitles.length} tracks`;
+
+                const streamUrl = data.stream.m3u8;
+
+                if (Hls.isSupported()) {
+                    if (hls) hls.destroy();
+                    hls = new Hls();
+                    hls.loadSource(streamUrl);
+                    hls.attachMedia(video);
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        video.play();
+                    });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = streamUrl;
+                    video.addEventListener('loadedmetadata', function() {
+                        video.play();
+                    });
+                } else {
+                    status.innerText = '❌ Browser tidak mendukung playback HLS M3U8.';
+                }
+            } catch (err) {
+                status.innerText = `❌ Error koneksi API: ${err.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
