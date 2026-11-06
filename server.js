@@ -1,159 +1,170 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const express = require('express');
-const { Readable } = require('stream');
+const { Readable, pipeline } = require('stream');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Simple In-Memory Cache
-const apiCache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 Menit
-
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const JUSTANIME_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    'User-Agent': UA,
     'Origin': 'https://justanime.to',
     'Referer': 'https://justanime.to/',
     'Accept': 'application/json, text/plain, */*'
 };
 
-app.use(express.static(__dirname));
+// ---------- Cache in-memory (maks. 500 entri, kedaluwarsa 5 menit) ----------
+const apiCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_MAX = 500;
 
+function cacheGet(key) {
+    const c = apiCache.get(key);
+    if (!c) return null;
+    if (Date.now() - c.t > CACHE_TTL) { apiCache.delete(key); return null; }
+    return c.payload;
+}
+
+function cacheSet(key, payload) {
+    if (apiCache.size >= CACHE_MAX) apiCache.delete(apiCache.keys().next().value);
+    apiCache.set(key, { t: Date.now(), payload });
+}
+
+const LIST_TIMEOUT = 7000;
+const SERVER_TIMEOUT = 6000;
+const MAX_TRIES = 4;
+
+// CORS Terbuka & Preflight OPTIONS
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.header('Access-Control-Allow-Headers', '*');
+    res.header('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+    if (req.method === 'OPTIONS') return res.sendStatus(200);
     next();
 });
 
-function safeTrim(str) {
-    if (!str || typeof str !== 'string') return '';
-    return str.trim();
-}
+// Health check endpoint
+app.get('/', (req, res) => {
+    res.json({
+        status: 'online',
+        service: 'JustAnime Streaming API Proxy Engine',
+        endpoints: {
+            stream: '/api/stream/:anilistId/:episode?mode=sub|dub&server=&refresh=1',
+            proxy: '/api/proxy?url={ENCODED_URL}&referer={ENCODED_REFERER}'
+        }
+    });
+});
 
-// Fetch dengan Timeout (Anti-Hung)
-async function fetchWithTimeout(url, options = {}, timeoutMs = 7000) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = LIST_TIMEOUT) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        const res = await fetch(url, { ...options, signal: controller.signal });
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
         clearTimeout(timer);
-        return res;
-    } catch (err) {
-        clearTimeout(timer);
-        throw err;
     }
 }
 
-// 1. Universal Proxy Endpoint
+const proxify = (u, referer) => `/api/proxy?url=${encodeURIComponent(u)}&referer=${encodeURIComponent(referer)}`;
+
+function isPrivateHost(h) {
+    h = h.toLowerCase();
+    return h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') ||
+        /^(0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) ||
+        /^\[(::1?|f[cd][0-9a-f]{2}:|fe80:)/.test(h);
+}
+
+// ---------- 1. Proxy Universal ----------
 app.get('/api/proxy', async (req, res) => {
-    let targetUrl = req.query.url;
-    let customReferer = req.query.referer;
-
-    if (!targetUrl || targetUrl === 'undefined') {
-        return res.status(400).send('Invalid URL');
-    }
-
-    try {
-        targetUrl = decodeURIComponent(targetUrl);
-    } catch (e) {}
+    const targetUrl = req.query.url;
+    if (!targetUrl || targetUrl === 'undefined') return res.status(400).send('Invalid URL');
 
     try {
         const parsedUrl = new URL(targetUrl);
+        if (!/^https?:$/.test(parsedUrl.protocol) || isPrivateHost(parsedUrl.hostname)) {
+            return res.status(400).send('URL tidak diizinkan');
+        }
         const targetOrigin = parsedUrl.origin;
-        const finalReferer = customReferer ? decodeURIComponent(customReferer) : `${targetOrigin}/`;
+        const finalReferer = req.query.referer || `${targetOrigin}/`;
 
         const requestHeaders = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+            'User-Agent': UA,
             'Referer': finalReferer,
             'Origin': targetOrigin,
             'Accept': '*/*'
         };
+        if (req.headers.range) requestHeaders['Range'] = req.headers.range;
 
-        if (req.headers.range) {
-            requestHeaders['Range'] = req.headers.range;
-        }
-
-        const response = await fetchWithTimeout(targetUrl, { 
-            headers: requestHeaders,
-            redirect: 'follow'
-        }, 10000);
-
+        const response = await fetchWithTimeout(targetUrl, { headers: requestHeaders, redirect: 'follow' }, 10000);
         if (!response.ok && response.status !== 206) {
             return res.status(response.status).send(`Proxy fetch failed: ${response.statusText}`);
         }
 
-        // Subtitle VTT Handler
+        // Subtitle
         if (targetUrl.includes('.vtt') || targetUrl.includes('subtitles')) {
+            let text = await response.text();
             res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
-            let vttText = await response.text();
-            const trimmed = safeTrim(vttText);
-            if (!trimmed.startsWith('WEBVTT')) {
-                vttText = 'WEBVTT\n\n' + (vttText || '');
+            if (!/^\uFEFF?\s*WEBVTT/.test(text) && /-->\s*\d+:\d+(:\d+)?\.\d+/.test(text)) {
+                text = 'WEBVTT\n\n' + text;
             }
-            return res.send(vttText);
+            return res.send(text);
         }
 
-        // M3U8 Playlist Handler
+        // Playlist m3u8
         if (targetUrl.includes('.m3u8')) {
-            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-            res.setHeader('Cache-Control', 'public, max-age=3600');
-            let m3u8Text = await response.text();
-            
-            if (!m3u8Text || typeof m3u8Text !== 'string') {
-                return res.status(404).send('Playlist empty');
-            }
+            const m3u8Text = await response.text();
+            if (!m3u8Text) return res.status(404).send('Playlist empty');
 
             const finalFetchUrl = response.url || targetUrl;
-            const baseUrl = finalFetchUrl.substring(0, finalFetchUrl.lastIndexOf('/') + 1);
+            const toProxy = (u) => /^(data|skd):/i.test(u) ? u : proxify(new URL(u, finalFetchUrl).href, finalReferer);
 
-            const lines = m3u8Text.split('\n');
-            const rewrittenLines = lines.map(line => {
-                const trimmed = safeTrim(line);
-                if (!trimmed || trimmed.startsWith('#')) return line;
-                const absoluteUrl = trimmed.startsWith('http') ? trimmed : new URL(trimmed, baseUrl).href;
-                return `/api/proxy?url=${encodeURIComponent(absoluteUrl)}&referer=${encodeURIComponent(finalReferer)}`;
-            });
+            const out = m3u8Text.split('\n').map(line => {
+                const t = line.trim();
+                if (!t) return line;
+                if (t.startsWith('#')) return line.replace(/URI="([^"]+)"/g, (m, u) => `URI="${toProxy(u)}"`);
+                return toProxy(t);
+            }).join('\n');
 
-            return res.send(rewrittenLines.join('\n'));
+            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+            res.setHeader('Cache-Control', 'public, max-age=3600');
+            return res.send(out);
         }
 
-        // MP4 Direct / TS Stream Pipe
+        // Segmen TS / MP4
         if (response.status === 206) {
             res.status(206);
-            if (response.headers.get('content-range')) {
-                res.setHeader('Content-Range', response.headers.get('content-range'));
-            }
+            if (response.headers.get('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
         }
-
-        if (response.headers.get('content-length')) {
+        if (!response.headers.get('content-encoding') && response.headers.get('content-length')) {
             res.setHeader('Content-Length', response.headers.get('content-length'));
         }
-
         const isMp4 = targetUrl.includes('.mp4');
         res.setHeader('Content-Type', isMp4 ? 'video/mp4' : (response.headers.get('content-type') || 'video/mp2t'));
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Cache-Control', 'public, max-age=86400');
 
-        const nodeStream = Readable.fromWeb(response.body);
-        nodeStream.pipe(res);
+        pipeline(Readable.fromWeb(response.body), res, () => {});
 
     } catch (err) {
-        if (!res.headersSent) {
-            res.status(500).send('Proxy error: ' + err.message);
-        }
+        if (!res.headersSent) res.status(500).send('Proxy error: ' + err.message);
     }
 });
 
-// 2. Stream API Endpoint (dengan Cache Memory & Auto Fallback)
+// ---------- 2. Stream API ----------
 app.get('/api/stream/:id/:ep', async (req, res) => {
     const { id, ep } = req.params;
-    const requestedServer = req.query.server;
-    const mode = (req.query.mode || 'sub').toLowerCase();
+    if (!/^\d+$/.test(id) || !/^\d+(\.\d+)?$/.test(ep)) {
+        return res.status(400).json({ success: false, message: 'ID atau episode tidak valid' });
+    }
 
+    const requestedServer = /^[\w-]{1,20}$/.test(req.query.server || '') ? req.query.server : '';
+    const mode = (req.query.mode || 'sub').toLowerCase() === 'dub' ? 'dub' : 'sub';
     const cacheKey = `${id}-${ep}-${mode}-${requestedServer || 'default'}`;
-    const cachedData = apiCache.get(cacheKey);
 
-    if (cachedData && (Date.now() - cachedData.timestamp < CACHE_TTL)) {
-        return res.json(cachedData.payload);
+    if (!req.query.refresh) {
+        const hit = cacheGet(cacheKey);
+        if (hit) return res.json(hit);
     }
 
     try {
@@ -161,46 +172,37 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
 
         const serverRes = await fetchWithTimeout(`${BASE_URL}/servers`, { headers: JUSTANIME_HEADERS });
         if (!serverRes.ok) return res.status(404).json({ success: false, message: 'Server list not found' });
-        
+
         const serverData = await serverRes.json();
         const serversObj = serverData.servers || {};
 
         const availableSubServers = Object.keys(serversObj).filter(s => serversObj[s].sub);
         const availableDubServers = Object.keys(serversObj).filter(s => serversObj[s].dub);
-
         const targetServers = mode === 'dub' ? availableDubServers : availableSubServers;
 
         if (targetServers.length === 0) {
             return res.status(404).json({ success: false, message: `Tidak ada server ${mode.toUpperCase()} aktif` });
         }
 
-        let serverQueue = [];
-        if (requestedServer && targetServers.includes(requestedServer)) {
-            serverQueue.push(requestedServer);
-        }
+        const serverQueue = [];
+        if (requestedServer && targetServers.includes(requestedServer)) serverQueue.push(requestedServer);
         ['momo', 'calm', 'revo', 'gigi'].forEach(s => {
-            if (targetServers.includes(s) && !serverQueue.includes(s)) {
-                serverQueue.push(s);
-            }
+            if (targetServers.includes(s) && !serverQueue.includes(s)) serverQueue.push(s);
         });
-        targetServers.forEach(s => {
-            if (!serverQueue.includes(s)) serverQueue.push(s);
-        });
+        targetServers.forEach(s => { if (!serverQueue.includes(s)) serverQueue.push(s); });
 
         let selectedServer = '';
         let streamData = null;
 
-        for (const srv of serverQueue) {
+        for (const srv of serverQueue.slice(0, MAX_TRIES)) {
             try {
-                const sRes = await fetchWithTimeout(`${BASE_URL}/${srv}`, { headers: JUSTANIME_HEADERS }, 4000);
+                const sRes = await fetchWithTimeout(`${BASE_URL}/${srv}`, { headers: JUSTANIME_HEADERS }, SERVER_TIMEOUT);
                 if (!sRes.ok) continue;
-                
                 const sData = await sRes.json();
-                const currentData = mode === 'dub' ? sData.dub : sData.sub;
-
-                if (currentData && currentData.sources && currentData.sources.length > 0) {
+                const current = mode === 'dub' ? sData.dub : sData.sub;
+                if (current && current.sources && current.sources.length > 0) {
                     selectedServer = srv;
-                    streamData = currentData;
+                    streamData = current;
                     break;
                 }
             } catch (e) {
@@ -208,24 +210,23 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
             }
         }
 
-        if (!streamData || !selectedServer) {
-            return res.status(500).json({ success: false, message: 'Semua server stream gagal direspon' });
+        if (!streamData) {
+            return res.status(500).json({ success: false, message: 'Semua server stream gagal merespons' });
         }
 
         const sourceObj = streamData.sources[0];
         const rawVideoUrl = sourceObj.url || '';
         const isM3u8 = sourceObj.isM3U8 !== undefined ? sourceObj.isM3U8 : rawVideoUrl.includes('.m3u8');
-        
-        const targetReferer = streamData.headers?.Referer || sourceObj.headers?.Referer || "https://justanime.to/";
-        const proxiedStreamUrl = `/api/proxy?url=${encodeURIComponent(rawVideoUrl)}&referer=${encodeURIComponent(targetReferer)}`;
+        const targetReferer = streamData.headers?.Referer || sourceObj.headers?.Referer || 'https://justanime.to/';
 
-        const rawSubtitles = (streamData.subtitles || streamData.tracks || []).filter(s => s && (s.url || s.file) && !(s.url || s.file).includes('thumbnails'));
+        const rawSubtitles = (streamData.subtitles || streamData.tracks || [])
+            .filter(s => s && (s.url || s.file) && !(s.url || s.file).includes('thumbnails'));
         const proxiedSubtitles = rawSubtitles.map(sub => ({
-            file: `/api/proxy?url=${encodeURIComponent(sub.url || sub.file)}&referer=${encodeURIComponent(targetReferer)}`,
+            file: proxify(sub.url || sub.file, targetReferer),
             label: sub.lang || sub.label || 'Subtitle'
         }));
 
-        const resultPayload = {
+        const payload = {
             success: true,
             anilistId: id,
             episode: Number(ep),
@@ -234,17 +235,19 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
             subServers: availableSubServers,
             dubServers: availableDubServers,
             stream: {
-                url: proxiedStreamUrl,
-                isM3u8: isM3u8,
+                url: proxify(rawVideoUrl, targetReferer),
+                isM3u8,
                 quality: sourceObj.quality
             },
-            subtitles: proxiedSubtitles
+            subtitles: proxiedSubtitles,
+            timestamps: {
+                intro: streamData.intro || { start: 0, end: 0 },
+                outro: streamData.outro || { start: 0, end: 0 }
+            }
         };
 
-        // Simpan ke Cache Memory
-        apiCache.set(cacheKey, { timestamp: Date.now(), payload: resultPayload });
-
-        return res.json(resultPayload);
+        cacheSet(cacheKey, payload);
+        return res.json(payload);
 
     } catch (err) {
         return res.status(500).json({ success: false, error: err.message });
@@ -252,5 +255,5 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 JustAnime Production Engine (Cache + Timeout) Aktif di: http://localhost:${PORT}`);
+    console.log(`🚀 JustAnime Engine (cache + fallback + proxy) aktif di: http://localhost:${PORT}`);
 });
