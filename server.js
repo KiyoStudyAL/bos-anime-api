@@ -13,7 +13,19 @@ const JUSTANIME_HEADERS = {
     'Accept': 'application/json, text/plain, */*'
 };
 
-// ---------- Cache In-Memory (Max 500 Entry, TTL 5 Menit) ----------
+// Pemetaan Nama Server Murni & Modern
+const SERVER_NAMES = {
+    momo: 'Server Alpha',
+    calm: 'Server Beta',
+    revo: 'Server Gamma',
+    gigi: 'Server Delta',
+    susi: 'Server Epsilon',
+    nami: 'Server Zeta',
+    onyx: 'Server Eta',
+    zone: 'Server Theta'
+};
+
+// Cache In-Memory (Max 500 Entry, 5 Menit)
 const apiCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
 const CACHE_MAX = 500;
@@ -30,11 +42,7 @@ function cacheSet(key, payload) {
     apiCache.set(key, { t: Date.now(), payload });
 }
 
-const LIST_TIMEOUT = 7000;
-const SERVER_TIMEOUT = 6000;
-const MAX_TRIES = 4;
-
-// Open CORS (Access dari Netlify / Domain Lain)
+// CORS Terbuka
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -44,11 +52,10 @@ app.use((req, res, next) => {
     next();
 });
 
-// Root Endpoint (Health Check)
 app.get('/', (req, res) => {
     res.json({
         status: 'online',
-        service: 'JustAnime Streaming API Proxy Engine',
+        service: 'JustAnime Ultra-Fast Headless API Engine',
         endpoints: {
             stream: '/api/stream/:anilistId/:episode?mode=sub|dub&server=&refresh=1',
             proxy: '/api/proxy?url={ENCODED_URL}&referer={ENCODED_REFERER}'
@@ -56,7 +63,7 @@ app.get('/', (req, res) => {
     });
 });
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = LIST_TIMEOUT) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -73,6 +80,21 @@ function isPrivateHost(h) {
     return h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') ||
         /^(0\.|10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) ||
         /^\[(::1?|f[cd][0-9a-f]{2}:|fe80:)/.test(h);
+}
+
+// Helper Fetch Tunggal per Server
+async function fetchServerStream(id, ep, srv, mode) {
+    const BASE_URL = `https://core.justanime.to/api/watch/${id}/episode/${ep}`;
+    const sRes = await fetchWithTimeout(`${BASE_URL}/${srv}`, { headers: JUSTANIME_HEADERS }, 3500);
+    if (!sRes.ok) throw new Error(`Server ${srv} HTTP ${sRes.status}`);
+    
+    const sData = await sRes.json();
+    const current = mode === 'dub' ? sData.dub : sData.sub;
+    
+    if (current && current.sources && current.sources.length > 0) {
+        return { selectedServer: srv, streamData: current };
+    }
+    throw new Error(`Server ${srv} no valid stream source`);
 }
 
 // ---------- 1. Universal Proxy Endpoint ----------
@@ -96,12 +118,11 @@ app.get('/api/proxy', async (req, res) => {
         };
         if (req.headers.range) requestHeaders['Range'] = req.headers.range;
 
-        const response = await fetchWithTimeout(targetUrl, { headers: requestHeaders, redirect: 'follow' }, 10000);
+        const response = await fetchWithTimeout(targetUrl, { headers: requestHeaders, redirect: 'follow' }, 8000);
         if (!response.ok && response.status !== 206) {
             return res.status(response.status).send(`Proxy fetch failed: ${response.statusText}`);
         }
 
-        // Subtitle VTT Safe Handler
         if (targetUrl.includes('.vtt') || targetUrl.includes('subtitles')) {
             let text = await response.text();
             res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
@@ -111,7 +132,6 @@ app.get('/api/proxy', async (req, res) => {
             return res.send(text);
         }
 
-        // M3U8 Playlist Handler
         if (targetUrl.includes('.m3u8')) {
             const m3u8Text = await response.text();
             if (!m3u8Text) return res.status(404).send('Playlist empty');
@@ -131,7 +151,6 @@ app.get('/api/proxy', async (req, res) => {
             return res.send(out);
         }
 
-        // TS / MP4 Segment Pipe
         if (response.status === 206) {
             res.status(206);
             if (response.headers.get('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
@@ -151,7 +170,7 @@ app.get('/api/proxy', async (req, res) => {
     }
 });
 
-// ---------- 2. Stream Fetcher API Endpoint ----------
+// ---------- 2. Parallel-Race Stream API ----------
 app.get('/api/stream/:id/:ep', async (req, res) => {
     const { id, ep } = req.params;
     if (!/^\d+$/.test(id) || !/^\d+(\.\d+)?$/.test(ep)) {
@@ -170,7 +189,7 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
     try {
         const BASE_URL = `https://core.justanime.to/api/watch/${id}/episode/${ep}`;
 
-        const serverRes = await fetchWithTimeout(`${BASE_URL}/servers`, { headers: JUSTANIME_HEADERS });
+        const serverRes = await fetchWithTimeout(`${BASE_URL}/servers`, { headers: JUSTANIME_HEADERS }, 4000);
         if (!serverRes.ok) return res.status(404).json({ success: false, message: 'Daftar server tidak ditemukan' });
 
         const serverData = await serverRes.json();
@@ -184,29 +203,45 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
             return res.status(404).json({ success: false, message: `Tidak ada server ${mode.toUpperCase()} aktif` });
         }
 
-        const serverQueue = [];
-        if (requestedServer && targetServers.includes(requestedServer)) serverQueue.push(requestedServer);
-        ['momo', 'calm', 'revo', 'gigi'].forEach(s => {
-            if (targetServers.includes(s) && !serverQueue.includes(s)) serverQueue.push(s);
-        });
-        targetServers.forEach(s => { if (!serverQueue.includes(s)) serverQueue.push(s); });
+        // Format nama server bersih untuk frontend
+        const formatServerList = (list) => list.map(srv => ({
+            id: srv,
+            name: SERVER_NAMES[srv] || `Server ${srv.toUpperCase()}`
+        }));
 
         let selectedServer = '';
         let streamData = null;
 
-        for (const srv of serverQueue.slice(0, MAX_TRIES)) {
+        // Jika user memilih server spesifik:
+        if (requestedServer && targetServers.includes(requestedServer)) {
             try {
-                const sRes = await fetchWithTimeout(`${BASE_URL}/${srv}`, { headers: JUSTANIME_HEADERS }, SERVER_TIMEOUT);
-                if (!sRes.ok) continue;
-                const sData = await sRes.json();
-                const current = mode === 'dub' ? sData.dub : sData.sub;
-                if (current && current.sources && current.sources.length > 0) {
-                    selectedServer = srv;
-                    streamData = current;
-                    break;
+                const resChoice = await fetchServerStream(id, ep, requestedServer, mode);
+                selectedServer = resChoice.selectedServer;
+                streamData = resChoice.streamData;
+            } catch (e) {}
+        }
+
+        // Jika belum dapat, jalankan PARALLEL RACE pada 3 server prioritas (momo, calm, revo)
+        if (!streamData) {
+            const priorityQueue = ['momo', 'calm', 'revo', 'gigi'].filter(s => targetServers.includes(s));
+            const raceTargets = priorityQueue.length > 0 ? priorityQueue : targetServers.slice(0, 3);
+
+            try {
+                // Siapa yang merespons paling cepat (milidetik) langsung MENANG!
+                const winner = await Promise.any(raceTargets.map(srv => fetchServerStream(id, ep, srv, mode)));
+                selectedServer = winner.selectedServer;
+                streamData = winner.streamData;
+            } catch (aggregateError) {
+                // Fallback terakhir: coba sisa server berurutan jika race utama gagal
+                for (const srv of targetServers) {
+                    if (raceTargets.includes(srv)) continue;
+                    try {
+                        const fallbackRes = await fetchServerStream(id, ep, srv, mode);
+                        selectedServer = fallbackRes.selectedServer;
+                        streamData = fallbackRes.streamData;
+                        break;
+                    } catch (err) {}
                 }
-            } catch (e) {
-                continue;
             }
         }
 
@@ -232,8 +267,9 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
             episode: Number(ep),
             modeUsed: mode,
             serverUsed: selectedServer,
-            subServers: availableSubServers,
-            dubServers: availableDubServers,
+            serverUsedName: SERVER_NAMES[selectedServer] || `Server ${selectedServer.toUpperCase()}`,
+            subServers: formatServerList(availableSubServers),
+            dubServers: formatServerList(availableDubServers),
             stream: {
                 url: proxify(rawVideoUrl, targetReferer),
                 isM3u8,
@@ -255,5 +291,5 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 JustAnime Headless Engine (cache + fallback + proxy) aktif di: http://localhost:${PORT}`);
+    console.log(`🚀 Ultra-Fast Parallel Stream Engine aktif di: http://localhost:${PORT}`);
 });
