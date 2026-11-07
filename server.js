@@ -13,7 +13,7 @@ const JUSTANIME_HEADERS = {
     'Accept': 'application/json, text/plain, */*'
 };
 
-// Pemetaan Nama Server Murni & Modern
+// Pemetaan Nama Server Murni
 const SERVER_NAMES = {
     momo: 'Server Alpha',
     calm: 'Server Beta',
@@ -25,7 +25,6 @@ const SERVER_NAMES = {
     zone: 'Server Theta'
 };
 
-// Cache In-Memory (Max 500 Entry, 5 Menit)
 const apiCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
 const CACHE_MAX = 500;
@@ -42,7 +41,6 @@ function cacheSet(key, payload) {
     apiCache.set(key, { t: Date.now(), payload });
 }
 
-// CORS Terbuka
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -82,7 +80,6 @@ function isPrivateHost(h) {
         /^\[(::1?|f[cd][0-9a-f]{2}:|fe80:)/.test(h);
 }
 
-// Helper Fetch Tunggal per Server
 async function fetchServerStream(id, ep, srv, mode) {
     const BASE_URL = `https://core.justanime.to/api/watch/${id}/episode/${ep}`;
     const sRes = await fetchWithTimeout(`${BASE_URL}/${srv}`, { headers: JUSTANIME_HEADERS }, 3500);
@@ -97,7 +94,7 @@ async function fetchServerStream(id, ep, srv, mode) {
     throw new Error(`Server ${srv} no valid stream source`);
 }
 
-// ---------- 1. Universal Proxy Endpoint ----------
+// 1. Universal Proxy Endpoint
 app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl || targetUrl === 'undefined') return res.status(400).send('Invalid URL');
@@ -170,7 +167,7 @@ app.get('/api/proxy', async (req, res) => {
     }
 });
 
-// ---------- 2. Parallel-Race Stream API ----------
+// 2. Parallel-Race Stream API Endpoint
 app.get('/api/stream/:id/:ep', async (req, res) => {
     const { id, ep } = req.params;
     if (!/^\d+$/.test(id) || !/^\d+(\.\d+)?$/.test(ep)) {
@@ -203,7 +200,6 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
             return res.status(404).json({ success: false, message: `Tidak ada server ${mode.toUpperCase()} aktif` });
         }
 
-        // Format nama server bersih untuk frontend
         const formatServerList = (list) => list.map(srv => ({
             id: srv,
             name: SERVER_NAMES[srv] || `Server ${srv.toUpperCase()}`
@@ -212,7 +208,6 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
         let selectedServer = '';
         let streamData = null;
 
-        // Jika user memilih server spesifik:
         if (requestedServer && targetServers.includes(requestedServer)) {
             try {
                 const resChoice = await fetchServerStream(id, ep, requestedServer, mode);
@@ -221,18 +216,15 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
             } catch (e) {}
         }
 
-        // Jika belum dapat, jalankan PARALLEL RACE pada 3 server prioritas (momo, calm, revo)
         if (!streamData) {
             const priorityQueue = ['momo', 'calm', 'revo', 'gigi'].filter(s => targetServers.includes(s));
             const raceTargets = priorityQueue.length > 0 ? priorityQueue : targetServers.slice(0, 3);
 
             try {
-                // Siapa yang merespons paling cepat (milidetik) langsung MENANG!
                 const winner = await Promise.any(raceTargets.map(srv => fetchServerStream(id, ep, srv, mode)));
                 selectedServer = winner.selectedServer;
                 streamData = winner.streamData;
             } catch (aggregateError) {
-                // Fallback terakhir: coba sisa server berurutan jika race utama gagal
                 for (const srv of targetServers) {
                     if (raceTargets.includes(srv)) continue;
                     try {
