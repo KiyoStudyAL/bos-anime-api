@@ -13,7 +13,6 @@ const JUSTANIME_HEADERS = {
     'Accept': 'application/json, text/plain, */*'
 };
 
-// Pemetaan Nama Server Murni
 const SERVER_NAMES = {
     momo: 'Server Alpha',
     calm: 'Server Beta',
@@ -61,7 +60,7 @@ app.get('/', (req, res) => {
     });
 });
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 7000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -82,7 +81,7 @@ function isPrivateHost(h) {
 
 async function fetchServerStream(id, ep, srv, mode) {
     const BASE_URL = `https://core.justanime.to/api/watch/${id}/episode/${ep}`;
-    const sRes = await fetchWithTimeout(`${BASE_URL}/${srv}`, { headers: JUSTANIME_HEADERS }, 3500);
+    const sRes = await fetchWithTimeout(`${BASE_URL}/${srv}`, { headers: JUSTANIME_HEADERS }, 6000);
     if (!sRes.ok) throw new Error(`Server ${srv} HTTP ${sRes.status}`);
     
     const sData = await sRes.json();
@@ -115,7 +114,7 @@ app.get('/api/proxy', async (req, res) => {
         };
         if (req.headers.range) requestHeaders['Range'] = req.headers.range;
 
-        const response = await fetchWithTimeout(targetUrl, { headers: requestHeaders, redirect: 'follow' }, 8000);
+        const response = await fetchWithTimeout(targetUrl, { headers: requestHeaders, redirect: 'follow' }, 10000);
         if (!response.ok && response.status !== 206) {
             return res.status(response.status).send(`Proxy fetch failed: ${response.statusText}`);
         }
@@ -167,7 +166,7 @@ app.get('/api/proxy', async (req, res) => {
     }
 });
 
-// 2. Parallel-Race Stream API Endpoint
+// 2. Stream API Endpoint
 app.get('/api/stream/:id/:ep', async (req, res) => {
     const { id, ep } = req.params;
     if (!/^\d+$/.test(id) || !/^\d+(\.\d+)?$/.test(ep)) {
@@ -186,7 +185,7 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
     try {
         const BASE_URL = `https://core.justanime.to/api/watch/${id}/episode/${ep}`;
 
-        const serverRes = await fetchWithTimeout(`${BASE_URL}/servers`, { headers: JUSTANIME_HEADERS }, 4000);
+        const serverRes = await fetchWithTimeout(`${BASE_URL}/servers`, { headers: JUSTANIME_HEADERS }, 7000);
         if (!serverRes.ok) return res.status(404).json({ success: false, message: 'Daftar server tidak ditemukan' });
 
         const serverData = await serverRes.json();
@@ -238,7 +237,7 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
         }
 
         if (!streamData) {
-            return res.status(500).json({ success: false, message: 'Semua server stream gagal merespons' });
+            return res.status(500).json({ success: false, message: 'Semua server stream gagal merespons (Timeout)' });
         }
 
         const sourceObj = streamData.sources[0];
@@ -278,10 +277,13 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
         return res.json(payload);
 
     } catch (err) {
-        return res.status(500).json({ success: false, message: err.message || 'Terjadi kesalahan internal server' });
+        const cleanMsg = err.name === 'AbortError' || err.message.includes('aborted')
+            ? 'Koneksi ke server stream timeout. Silakan klik Refresh Stream.'
+            : (err.message || 'Terjadi kesalahan internal server');
+        return res.status(500).json({ success: false, message: cleanMsg });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Ultra-Fast Parallel Stream Engine aktif di: http://localhost:${PORT}`);
+    console.log(`🚀 Ultra-Fast Stream Engine aktif di: http://localhost:${PORT}`);
 });
