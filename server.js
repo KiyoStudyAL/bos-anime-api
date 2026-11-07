@@ -250,7 +250,7 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
         return res.json(payload);
 
     } catch (err) {
-        return res.status(500).json({ success: false, error: err.message });
+        return res.status(500).json({ success: false, message: err.message });
     }
 });
 
