@@ -13,7 +13,7 @@ const JUSTANIME_HEADERS = {
     'Accept': 'application/json, text/plain, */*'
 };
 
-// ---------- Cache in-memory (maks. 500 entri, kedaluwarsa 5 menit) ----------
+// ---------- Cache In-Memory (Max 500 Entry, TTL 5 Menit) ----------
 const apiCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
 const CACHE_MAX = 500;
@@ -34,7 +34,7 @@ const LIST_TIMEOUT = 7000;
 const SERVER_TIMEOUT = 6000;
 const MAX_TRIES = 4;
 
-// CORS Terbuka & Preflight OPTIONS
+// Open CORS (Access dari Netlify / Domain Lain)
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -44,7 +44,7 @@ app.use((req, res, next) => {
     next();
 });
 
-// Health check endpoint
+// Root Endpoint (Health Check)
 app.get('/', (req, res) => {
     res.json({
         status: 'online',
@@ -75,7 +75,7 @@ function isPrivateHost(h) {
         /^\[(::1?|f[cd][0-9a-f]{2}:|fe80:)/.test(h);
 }
 
-// ---------- 1. Proxy Universal ----------
+// ---------- 1. Universal Proxy Endpoint ----------
 app.get('/api/proxy', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl || targetUrl === 'undefined') return res.status(400).send('Invalid URL');
@@ -101,7 +101,7 @@ app.get('/api/proxy', async (req, res) => {
             return res.status(response.status).send(`Proxy fetch failed: ${response.statusText}`);
         }
 
-        // Subtitle
+        // Subtitle VTT Safe Handler
         if (targetUrl.includes('.vtt') || targetUrl.includes('subtitles')) {
             let text = await response.text();
             res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
@@ -111,7 +111,7 @@ app.get('/api/proxy', async (req, res) => {
             return res.send(text);
         }
 
-        // Playlist m3u8
+        // M3U8 Playlist Handler
         if (targetUrl.includes('.m3u8')) {
             const m3u8Text = await response.text();
             if (!m3u8Text) return res.status(404).send('Playlist empty');
@@ -131,7 +131,7 @@ app.get('/api/proxy', async (req, res) => {
             return res.send(out);
         }
 
-        // Segmen TS / MP4
+        // TS / MP4 Segment Pipe
         if (response.status === 206) {
             res.status(206);
             if (response.headers.get('content-range')) res.setHeader('Content-Range', response.headers.get('content-range'));
@@ -151,7 +151,7 @@ app.get('/api/proxy', async (req, res) => {
     }
 });
 
-// ---------- 2. Stream API ----------
+// ---------- 2. Stream Fetcher API Endpoint ----------
 app.get('/api/stream/:id/:ep', async (req, res) => {
     const { id, ep } = req.params;
     if (!/^\d+$/.test(id) || !/^\d+(\.\d+)?$/.test(ep)) {
@@ -171,7 +171,7 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
         const BASE_URL = `https://core.justanime.to/api/watch/${id}/episode/${ep}`;
 
         const serverRes = await fetchWithTimeout(`${BASE_URL}/servers`, { headers: JUSTANIME_HEADERS });
-        if (!serverRes.ok) return res.status(404).json({ success: false, message: 'Server list not found' });
+        if (!serverRes.ok) return res.status(404).json({ success: false, message: 'Daftar server tidak ditemukan' });
 
         const serverData = await serverRes.json();
         const serversObj = serverData.servers || {};
@@ -250,10 +250,10 @@ app.get('/api/stream/:id/:ep', async (req, res) => {
         return res.json(payload);
 
     } catch (err) {
-        return res.status(500).json({ success: false, message: err.message });
+        return res.status(500).json({ success: false, message: err.message || 'Terjadi kesalahan internal server' });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 JustAnime Engine (cache + fallback + proxy) aktif di: http://localhost:${PORT}`);
+    console.log(`🚀 JustAnime Headless Engine (cache + fallback + proxy) aktif di: http://localhost:${PORT}`);
 });
